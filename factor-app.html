@@ -779,6 +779,15 @@
       <input type="number" id="setNextInvNum" min="1">
     </div>
     <button class="btn-primary" id="saveSettingsBtn">ذخیره تنظیمات</button>
+
+    <div style="margin-top:22px; padding-top:16px; border-top:1.5px solid var(--line);">
+      <label>پشتیبان‌گیری / انتقال بین گوشی و لپ‌تاپ</label>
+      <div style="display:flex; gap:8px;">
+        <button class="btn-secondary" id="exportDataBtn" style="flex:1;">دریافت فایل پشتیبان</button>
+        <button class="btn-secondary" id="importDataBtn" style="flex:1;">بازیابی از فایل</button>
+      </div>
+      <input type="file" id="importFileInput" accept="application/json" style="display:none;">
+    </div>
   </div>
 </div>
 
@@ -893,20 +902,21 @@ function showToast(msg){
   setTimeout(()=>t.classList.remove('show'), 1800);
 }
 
-// ---------- Storage ----------
+// ---------- Storage (browser localStorage - persists on this device/browser) ----------
+const STORAGE_PREFIX = 'daftar_factor_';
 async function loadKey(key, fallback){
   try{
-    const res = await window.storage.get(key, false);
-    return res ? JSON.parse(res.value) : fallback;
+    const raw = localStorage.getItem(STORAGE_PREFIX + key);
+    return raw ? JSON.parse(raw) : fallback;
   }catch(e){
     return fallback;
   }
 }
 async function saveKey(key, value){
   try{
-    await window.storage.set(key, JSON.stringify(value), false);
+    localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
   }catch(e){
-    showToast('خطا در ذخیره‌سازی');
+    showToast('خطا در ذخیره‌سازی — حافظه مرورگر پر است');
   }
 }
 async function loadAll(){
@@ -1429,6 +1439,59 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async ()=>{
   refreshInvoiceNumberTag();
   document.getElementById('settingsOverlay').classList.remove('active');
   showToast('تنظیمات ذخیره شد ✓');
+});
+
+document.getElementById('exportDataBtn').addEventListener('click', ()=>{
+  const backup = { invoices, products, purchases, settings, exportedAt: new Date().toISOString() };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'daftar-factor-backup-' + todayISO() + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('فایل پشتیبان دانلود شد ✓');
+});
+
+document.getElementById('importDataBtn').addEventListener('click', ()=>{
+  document.getElementById('importFileInput').click();
+});
+document.getElementById('importFileInput').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = async (ev)=>{
+    try{
+      const data = JSON.parse(ev.target.result);
+      if(!Array.isArray(data.invoices) || !Array.isArray(data.products) || !Array.isArray(data.purchases)){
+        showToast('فایل پشتیبان معتبر نیست');
+        return;
+      }
+      invoices = data.invoices;
+      products = data.products;
+      purchases = data.purchases;
+      if(data.settings) settings = Object.assign(settings, data.settings);
+      await saveInvoices();
+      await saveProducts();
+      await savePurchases();
+      await saveSettings();
+      refreshProductDatalists();
+      refreshInvoiceNumberTag();
+      renderArchive();
+      renderStatementCustList();
+      renderProductsList();
+      renderPurchasesList();
+      renderReport();
+      document.getElementById('settingsOverlay').classList.remove('active');
+      showToast('اطلاعات با موفقیت بازیابی شد ✓');
+    }catch(err){
+      showToast('خطا در خواندن فایل پشتیبان');
+    }
+    e.target.value = '';
+  };
+  reader.readAsText(file);
 });
 
 // ---------- Print ----------
