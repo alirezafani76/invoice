@@ -217,6 +217,11 @@
     margin-bottom:16px;
   }
   .total-line span.amount{color:var(--brass-dark);}
+  .expected-profit-line{
+    font-size:12.5px;
+    padding:8px 0 4px;
+    margin-bottom:12px;
+  }
   .btn-primary{
     background:var(--brass);
     color:#fff;
@@ -783,14 +788,13 @@
       <div class="add-row-form">
         <input type="text" id="newProdName" placeholder="نام کالا">
         <input type="number" id="newProdPrice" placeholder="قیمت فروش" min="0">
-        <input type="number" id="newProdCost" placeholder="قیمت خرید (اختیاری)" min="0">
         <input type="number" id="newProdStock" placeholder="موجودی اولیه" min="0">
         <button id="addProductBtn">افزودن</button>
       </div>
     </div>
     <div class="card">
-      <label>لیست کالاها، قیمت‌ها و مارجین</label>
-      <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:10px;">قیمت خرید و مارجین فقط برای خودت نمایش داده می‌شه و روی فاکتور چاپی نمیاد.</div>
+      <label>لیست کالاها</label>
+      <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:10px;">قیمت خرید از تب «خرید» خودش محاسبه می‌شه. مارجین فقط برای خودت نمایش داده می‌شه و روی فاکتور چاپی نمیاد.</div>
       <div id="productsList"></div>
     </div>
   </section>
@@ -812,7 +816,7 @@
   <!-- PURCHASES -->
   <section class="view" id="view-purchases">
     <div class="card">
-      <label>ثبت خرید کالا</label>
+      <label>ثبت فاکتور خرید</label>
       <div class="field">
         <label>تاریخ (شمسی)</label>
         <div class="jalali-date-row">
@@ -822,30 +826,38 @@
         </div>
       </div>
       <div class="field">
-        <label>نام کالا</label>
-        <input type="text" id="purchName" list="productDatalist2" placeholder="نام کالای خریداری‌شده">
-        <datalist id="productDatalist2"></datalist>
+        <label>نام تامین‌کننده/فروشنده (اختیاری)</label>
+        <input type="text" id="purchSupplier" placeholder="مثلاً: پخش فلان">
       </div>
-      <div class="row2 field">
-        <div>
-          <label>تعداد</label>
-          <input type="number" id="purchQty" min="0" value="1">
-        </div>
-        <div>
-          <label>قیمت خرید واحد</label>
-          <input type="number" id="purchPrice" min="0">
-        </div>
-      </div>
+
+      <label>اقلام خریداری‌شده</label>
+      <table class="items" id="purchItemsTable">
+        <thead>
+          <tr>
+            <th class="col-name">شرح</th>
+            <th class="col-num">تعداد</th>
+            <th class="col-price">قیمت خرید واحد</th>
+            <th class="col-sum">جمع</th>
+            <th class="col-del"></th>
+          </tr>
+        </thead>
+        <tbody id="purchItemsBody"></tbody>
+      </table>
+      <datalist id="productDatalist2"></datalist>
+      <button class="add-item-btn" id="addPurchItemBtn">+ افزودن ردیف</button>
+
       <div class="total-line">
-        <span>جمع خرید</span>
+        <span>جمع فاکتور خرید</span>
         <span class="amount" id="purchTotal">۰ تومان</span>
       </div>
-      <button class="btn-primary" id="savePurchaseBtn">ثبت خرید</button>
+      <div class="expected-profit-line" id="purchExpectedProfit"></div>
+
+      <button class="btn-primary" id="savePurchaseBtn">ثبت فاکتور خرید</button>
     </div>
     <div class="card">
-      <label>خریدهای ثبت‌شده</label>
+      <label>فاکتورهای خرید ثبت‌شده</label>
       <div class="search-box">
-        <input type="text" id="purchSearch" placeholder="جستجو بر اساس نام کالا...">
+        <input type="text" id="purchSearch" placeholder="جستجو بر اساس نام کالا یا تامین‌کننده...">
       </div>
       <div id="purchTotalFiltered" style="font-size:13px; font-weight:700; color:var(--brass-dark); margin-bottom:10px;"></div>
       <div id="purchasesList"></div>
@@ -942,11 +954,13 @@
 <script>
 let invoices = [];
 let products = [];
-let purchases = [];
+let purchaseInvoices = [];
 let settings = { bizName:'', ownerName:'', phone:'', address:'', nextInvoiceNumber: 1000 };
 
 let items = [];
 let editingItemId = 0;
+let purchItems = [];
+let editingPurchItemId = 0;
 
 // ---------- Jalali (Shamsi) calendar ----------
 function g2j(gy, gm, gd){
@@ -1065,13 +1079,25 @@ async function saveKey(key, value){
 async function loadAll(){
   invoices = await loadKey('invoices', []);
   products = await loadKey('products', []);
-  purchases = await loadKey('purchases', []);
+  purchaseInvoices = await loadKey('purchaseInvoices', null);
+  if(purchaseInvoices === null){
+    // migrate legacy flat purchase-line records into grouped purchase invoices (one item each)
+    const legacy = await loadKey('purchases', []);
+    purchaseInvoices = legacy.map(p=>({
+      id: p.id,
+      date: p.date,
+      supplierName: '',
+      items: [{name: p.name, qty: p.qty, costPrice: p.price}],
+      total: p.total
+    }));
+    if(purchaseInvoices.length) await saveKey('purchaseInvoices', purchaseInvoices);
+  }
   const s = await loadKey('settings', null);
   if(s) settings = Object.assign(settings, s);
 }
 const saveInvoices  = ()=> saveKey('invoices', invoices);
 const saveProducts  = ()=> saveKey('products', products);
-const savePurchases = ()=> saveKey('purchases', purchases);
+const savePurchaseInvoices = ()=> saveKey('purchaseInvoices', purchaseInvoices);
 const saveSettings  = ()=> saveKey('settings', settings);
 
 // ---------- Tabs ----------
@@ -1498,25 +1524,23 @@ function renderStatement(name){
 document.getElementById('addProductBtn').addEventListener('click', async ()=>{
   const name = document.getElementById('newProdName').value.trim();
   const price = Number(document.getElementById('newProdPrice').value) || 0;
-  const costPrice = Number(document.getElementById('newProdCost').value) || 0;
   const stock = Number(document.getElementById('newProdStock').value) || 0;
   if(!name){ showToast('نام کالا را وارد کنید'); return; }
-  products.push({id: Date.now(), name, price, costPrice, stock});
+  products.push({id: Date.now(), name, price, costPrice: 0, stock});
   await saveProducts();
   document.getElementById('newProdName').value = '';
   document.getElementById('newProdPrice').value = '';
-  document.getElementById('newProdCost').value = '';
   document.getElementById('newProdStock').value = '';
   refreshProductDatalists();
   renderProductsList();
   showToast('کالا اضافه شد ✓');
 });
 function marginHTML(price, cost){
-  if(!cost || cost<=0) return '<span class="prod-margin-txt" style="color:var(--ink-soft);">مارجین: —</span>';
+  if(!cost || cost<=0) return '<span class="prod-margin-txt" style="color:var(--ink-soft);">آخرین قیمت خرید ثبت نشده — بعد از ثبت فاکتور خرید این کالا، مارجین خودش محاسبه می‌شه.</span>';
   const margin = price - cost;
   const pct = Math.round((margin/cost)*1000)/10;
   const color = margin>=0 ? 'var(--good)' : 'var(--danger)';
-  return `<span class="prod-margin-txt" style="color:${color};font-weight:700;">مارجین: ${fmt(margin)} (${toPersianDigits(pct)}٪)</span>`;
+  return `<span class="prod-margin-txt">آخرین خرید: <b>${fmt(cost)}</b> · <span style="color:${color};font-weight:700;">مارجین: ${fmt(margin)} (${toPersianDigits(pct)}٪)</span></span>`;
 }
 function renderProductsList(){
   refreshProductDatalists();
@@ -1532,8 +1556,7 @@ function renderProductsList(){
         <button class="del-btn" data-delprod="${p.id}">×</button>
       </div>
       <div class="per-price-row">
-        <div><label>فروش</label><input type="number" class="prod-price" data-id="${p.id}" value="${p.price}"></div>
-        <div><label>خرید</label><input type="number" class="prod-cost" data-id="${p.id}" value="${p.costPrice||''}" placeholder="—"></div>
+        <div><label>قیمت فروش</label><input type="number" class="prod-price" data-id="${p.id}" value="${p.price}"></div>
         <div><label>موجودی</label><input type="number" class="prod-stock" data-id="${p.id}" value="${p.stock||0}"></div>
       </div>
       <div class="prod-margin">${marginHTML(p.price, p.costPrice)}</div>
@@ -1566,15 +1589,6 @@ function renderProductsList(){
       const id = Number(e.target.dataset.id);
       const p = products.find(x=>x.id===id);
       if(p) p.price = Number(e.target.value) || 0;
-      liveUpdateMargin(id);
-    });
-    inp.addEventListener('change', async ()=>{ await saveProducts(); });
-  });
-  box.querySelectorAll('.prod-cost').forEach(inp=>{
-    inp.addEventListener('input', e=>{
-      const id = Number(e.target.dataset.id);
-      const p = products.find(x=>x.id===id);
-      if(p) p.costPrice = Number(e.target.value) || 0;
       liveUpdateMargin(id);
     });
     inp.addEventListener('change', async ()=>{ await saveProducts(); });
@@ -1618,113 +1632,198 @@ document.getElementById('invSearch').addEventListener('input', e=>{
 });
 
 
-// ---------- Purchases ----------
-function updatePurchTotal(){
-  const qty = Number(document.getElementById('purchQty').value) || 0;
-  const price = Number(document.getElementById('purchPrice').value) || 0;
-  document.getElementById('purchTotal').textContent = fmt(qty*price);
+// ---------- Purchases (multi-item purchase invoices) ----------
+function newPurchItemRow(){
+  editingPurchItemId++;
+  purchItems.push({id: editingPurchItemId, name:'', qty:1, costPrice:0});
+  renderPurchItemsTable();
 }
-document.getElementById('purchQty').addEventListener('input', updatePurchTotal);
-document.getElementById('purchPrice').addEventListener('input', updatePurchTotal);
-document.getElementById('purchName').addEventListener('input', e=>{
-  const match = products.find(p=>p.name === e.target.value);
-  if(match){
-    document.getElementById('purchPrice').value = match.price;
-    updatePurchTotal();
+function expectedProfitForItem(name, qty, costPrice){
+  const p = products.find(pr=>pr.name === name);
+  if(!p || !p.price || p.price<=0) return null;
+  return (p.price - costPrice) * qty;
+}
+function renderPurchItemsTable(){
+  const body = document.getElementById('purchItemsBody');
+  body.innerHTML = '';
+  purchItems.forEach(it=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="col-name"><input type="text" list="productDatalist2" data-id="${it.id}" data-f="name" value="${esc(it.name)}" placeholder="نام کالا"></td>
+      <td class="col-num"><input type="number" min="0" data-id="${it.id}" data-f="qty" value="${it.qty}"></td>
+      <td class="col-price"><input type="number" min="0" data-id="${it.id}" data-f="costPrice" value="${it.costPrice}"></td>
+      <td class="col-sum">${fmt(it.qty*it.costPrice)}</td>
+      <td class="col-del"><button class="del-btn" data-del="${it.id}">×</button></td>
+    `;
+    body.appendChild(tr);
+  });
+  body.querySelectorAll('input').forEach(inp=>{
+    inp.addEventListener('input', e=>{
+      const id = Number(e.target.dataset.id);
+      const f = e.target.dataset.f;
+      const item = purchItems.find(i=>i.id===id);
+      if(!item) return;
+      if(f==='name') item.name = e.target.value;
+      else item[f] = Number(e.target.value) || 0;
+      const row = e.target.closest('tr');
+      row.querySelector('.col-sum').textContent = fmt(item.qty*item.costPrice);
+      updatePurchTotal();
+    });
+  });
+  body.querySelectorAll('[data-del]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const id = Number(b.dataset.del);
+      purchItems = purchItems.filter(i=>i.id!==id);
+      renderPurchItemsTable();
+      updatePurchTotal();
+    });
+  });
+  updatePurchTotal();
+}
+function updatePurchTotal(){
+  const total = purchItems.reduce((s,i)=>s + i.qty*i.costPrice, 0);
+  document.getElementById('purchTotal').textContent = fmt(total);
+  let profit = 0, anyKnown = false;
+  purchItems.forEach(i=>{
+    if(i.name.trim()===''||i.qty<=0) return;
+    const ep = expectedProfitForItem(i.name, i.qty, i.costPrice);
+    if(ep !== null){ profit += ep; anyKnown = true; }
+  });
+  const box = document.getElementById('purchExpectedProfit');
+  if(anyKnown){
+    const color = profit>=0 ? 'var(--good)' : 'var(--danger)';
+    box.innerHTML = `<span style="color:${color};font-weight:700;">سود پیش‌بینی‌شده از فروش این کالاها: ${fmt(profit)}</span>`;
+  } else {
+    box.innerHTML = `<span style="color:var(--ink-soft);">سود پیش‌بینی‌شده: فقط برای کالاهایی که قیمت فروش تعریف‌شده دارن محاسبه می‌شه</span>`;
   }
-});
+}
+document.getElementById('addPurchItemBtn').addEventListener('click', newPurchItemRow);
+
 document.getElementById('savePurchaseBtn').addEventListener('click', async ()=>{
   const date = getIsoFromJalaliFields('purchDate');
-  const name = document.getElementById('purchName').value.trim();
-  const qty = Number(document.getElementById('purchQty').value) || 0;
-  const price = Number(document.getElementById('purchPrice').value) || 0;
+  const supplierName = document.getElementById('purchSupplier').value.trim();
+  const validItems = purchItems.filter(i=>i.name.trim() !== '' && i.qty>0);
   if(!date){ showToast('تاریخ را درست وارد کنید'); return; }
-  if(!name){ showToast('نام کالا را وارد کنید'); return; }
-  if(qty <= 0){ showToast('تعداد را وارد کنید'); return; }
-  purchases.unshift({id: Date.now(), date, name, qty, price, total: qty*price});
-  await savePurchases();
+  if(validItems.length === 0){ showToast('حداقل یک ردیف کالا اضافه کنید'); return; }
 
-  // increase stock; auto-create the product if it doesn't exist yet
-  let p = products.find(pr=>pr.name === name);
-  if(!p){
-    p = {id: Date.now()+1, name, price: 0, costPrice: price, stock: 0};
-    products.push(p);
-  }
-  p.stock = (Number(p.stock)||0) + qty;
-  if(!p.costPrice) p.costPrice = price;
+  const total = validItems.reduce((s,i)=>s + i.qty*i.costPrice, 0);
+  const purchaseInvoice = {
+    id: Date.now(),
+    date: date,
+    supplierName: supplierName,
+    items: validItems.map(i=>({name:i.name, qty:i.qty, costPrice:i.costPrice})),
+    total: total
+  };
+  purchaseInvoices.unshift(purchaseInvoice);
+  await savePurchaseInvoices();
+
+  // increase stock & update last cost price; auto-create products that don't exist yet
+  validItems.forEach(i=>{
+    let p = products.find(pr=>pr.name === i.name);
+    if(!p){
+      p = {id: Date.now()+Math.random(), name: i.name, price: 0, costPrice: 0, stock: 0};
+      products.push(p);
+    }
+    p.stock = (Number(p.stock)||0) + i.qty;
+    p.costPrice = i.costPrice;
+  });
   await saveProducts();
   refreshProductDatalists();
 
-  document.getElementById('purchName').value = '';
-  document.getElementById('purchQty').value = 1;
-  document.getElementById('purchPrice').value = '';
+  document.getElementById('purchSupplier').value = '';
   setJalaliFieldsToday('purchDate');
-  updatePurchTotal();
+  purchItems = [];
+  editingPurchItemId = 0;
+  newPurchItemRow();
   renderPurchasesList(document.getElementById('purchSearch').value);
-  showToast('خرید ثبت شد و موجودی به‌روز شد ✓');
+  showToast('فاکتور خرید ثبت شد و موجودی/قیمت خرید به‌روز شد ✓');
 });
+
 document.getElementById('purchSearch').addEventListener('input', e=>{
   renderPurchasesList(e.target.value);
 });
+
+function purchaseInvoiceProfit(pInv){
+  let profit = 0, anyKnown = false;
+  pInv.items.forEach(i=>{
+    const ep = expectedProfitForItem(i.name, i.qty, i.costPrice);
+    if(ep !== null){ profit += ep; anyKnown = true; }
+  });
+  return anyKnown ? profit : null;
+}
+
 function renderPurchasesList(filter=''){
   const box = document.getElementById('purchasesList');
   const f = (filter||'').trim().toLowerCase();
-  const filtered = purchases.filter(p=>p.name.toLowerCase().includes(f));
+  const filtered = purchaseInvoices.filter(pInv =>
+    pInv.items.some(i=>i.name.toLowerCase().includes(f)) ||
+    (pInv.supplierName||'').toLowerCase().includes(f)
+  );
   const totalFiltered = filtered.reduce((s,p)=>s+p.total,0);
   document.getElementById('purchTotalFiltered').textContent = filtered.length ? ('جمع نمایش‌داده‌شده: ' + fmt(totalFiltered)) : '';
   if(filtered.length === 0){
     box.innerHTML = `<div class="empty-state"><div class="stamp">🧾</div>موردی یافت نشد</div>`;
     return;
   }
-  box.innerHTML = filtered.map(p=>`
-    <div class="list-row" data-id="${p.id}">
-      <div class="rname">${esc(p.name)} <span class="rmeta">(${p.qty} × ${fmt(p.price)} · ${formatJalali(p.date)})</span></div>
-      <div class="rprice">${fmt(p.total)}</div>
-      <button class="del-btn" data-editpurch="${p.id}" title="ویرایش" style="color:var(--brass-dark);">✎</button>
-      <button class="del-btn" data-delpurch="${p.id}">×</button>
+  box.innerHTML = filtered.map(pInv=>{
+    const profit = purchaseInvoiceProfit(pInv);
+    const profitTxt = profit===null ? '' : `<span style="color:${profit>=0?'var(--good)':'var(--danger)'};font-weight:700;"> · سود پیش‌بینی: ${fmt(profit)}</span>`;
+    return `
+    <div class="invoice-card" data-id="${pInv.id}">
+      <div class="invoice-head">
+        <div>
+          <div class="invoice-name">${pInv.supplierName ? esc(pInv.supplierName) : 'بدون نام تامین‌کننده'}</div>
+          <div class="invoice-date">${formatJalali(pInv.date)}</div>
+        </div>
+        <div class="invoice-amount">${fmt(pInv.total)}</div>
+      </div>
+      <div class="invoice-meta">${pInv.items.length} قلم (${pInv.items.map(i=>esc(i.name)).join('، ')})${profitTxt}</div>
     </div>
-  `).join('');
-  box.querySelectorAll('[data-delpurch]').forEach(b=>{
-    b.addEventListener('click', async ()=>{
-      const id = Number(b.dataset.delpurch);
-      const rec = purchases.find(x=>x.id===id);
-      purchases = purchases.filter(p=>p.id!==id);
-      await savePurchases();
-      if(rec){
-        const prod = products.find(pr=>pr.name === rec.name);
-        if(prod){
-          prod.stock = (Number(prod.stock)||0) - rec.qty;
-          await saveProducts();
-        }
-      }
-      renderPurchasesList(document.getElementById('purchSearch').value);
-      showToast('خرید حذف شد و موجودی اصلاح شد');
-    });
+  `;
+  }).join('');
+  box.querySelectorAll('.invoice-card').forEach(card=>{
+    card.addEventListener('click', ()=> openPurchaseDetail(Number(card.dataset.id)));
   });
-  box.querySelectorAll('[data-editpurch]').forEach(b=>{
-    b.addEventListener('click', async ()=>{
-      const id = Number(b.dataset.editpurch);
-      const p = purchases.find(x=>x.id===id);
-      if(!p) return;
-      document.getElementById('purchName').value = p.name;
-      document.getElementById('purchQty').value = p.qty;
-      document.getElementById('purchPrice').value = p.price;
-      const [jy,jm,jd] = isoToJalaliParts(p.date);
-      document.getElementById('purchDateY').value = jy;
-      document.getElementById('purchDateM').value = jm;
-      document.getElementById('purchDateD').value = jd;
-      updatePurchTotal();
-      purchases = purchases.filter(x=>x.id!==id);
-      await savePurchases();
-      const prod = products.find(pr=>pr.name === p.name);
-      if(prod){
-        prod.stock = (Number(prod.stock)||0) - p.qty;
-        await saveProducts();
-      }
-      renderPurchasesList(document.getElementById('purchSearch').value);
-      document.getElementById('purchName').scrollIntoView({behavior:'smooth', block:'center'});
-      showToast('مقادیر رو ویرایش کن و دوباره «ثبت خرید» بزن');
+}
+
+function purchaseDetailHTML(pInv){
+  const profit = purchaseInvoiceProfit(pInv);
+  return `
+    <h2>${pInv.supplierName ? esc(pInv.supplierName) : 'فاکتور خرید'}</h2>
+    <div class="sub">تاریخ: ${formatJalali(pInv.date)}</div>
+    <table class="detail-table">
+      <thead><tr><th>شرح</th><th>تعداد</th><th>قیمت خرید</th><th>جمع</th></tr></thead>
+      <tbody>
+        ${pInv.items.map(i=>`<tr><td>${esc(i.name)}</td><td>${i.qty}</td><td>${fmt(i.costPrice)}</td><td>${fmt(i.qty*i.costPrice)}</td></tr>`).join('')}
+      </tbody>
+    </table>
+    <div class="detail-total"><span>جمع فاکتور خرید</span><span>${fmt(pInv.total)}</span></div>
+    ${profit!==null ? `<div class="sub" style="color:${profit>=0?'var(--good)':'var(--danger)'};font-weight:700;">سود پیش‌بینی‌شده از فروش این کالاها: ${fmt(profit)}</div>` : ''}
+  `;
+}
+function openPurchaseDetail(id){
+  const pInv = purchaseInvoices.find(x=>x.id===id);
+  if(!pInv) return;
+  const content = document.getElementById('detailContent');
+  content.innerHTML = purchaseDetailHTML(pInv) + `
+    <div class="sheet-actions">
+      <button class="btn-secondary" id="delPurchBtn" style="color:#9C4A3D;border-color:#9C4A3D;">حذف فاکتور خرید</button>
+    </div>
+  `;
+  document.getElementById('detailOverlay').classList.add('active');
+  document.getElementById('delPurchBtn').addEventListener('click', async ()=>{
+    purchaseInvoices = purchaseInvoices.filter(x=>x.id!==id);
+    await savePurchaseInvoices();
+    // reverse stock effect for each item
+    let changed = false;
+    pInv.items.forEach(i=>{
+      const p = products.find(pr=>pr.name === i.name);
+      if(p){ p.stock = (Number(p.stock)||0) - i.qty; changed = true; }
     });
+    if(changed) await saveProducts();
+    document.getElementById('detailOverlay').classList.remove('active');
+    renderPurchasesList(document.getElementById('purchSearch').value);
+    showToast('فاکتور خرید حذف شد و موجودی اصلاح شد');
   });
 }
 
@@ -1805,7 +1904,7 @@ function dateInRange(dateStr, range){
 }
 function renderReport(){
   const salesInRange = invoices.filter(i=>dateInRange(i.date, currentRange));
-  const costInRange = purchases.filter(p=>dateInRange(p.date, currentRange));
+  const costInRange = purchaseInvoices.filter(p=>dateInRange(p.date, currentRange));
   const totalSales = salesInRange.reduce((s,i)=>s+i.total,0);
   const totalCost = costInRange.reduce((s,i)=>s+i.total,0);
   document.getElementById('sumSales').textContent = fmt(totalSales);
@@ -1859,7 +1958,7 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async ()=>{
 });
 
 document.getElementById('exportDataBtn').addEventListener('click', ()=>{
-  const backup = { invoices, products, purchases, settings, exportedAt: new Date().toISOString() };
+  const backup = { invoices, products, purchaseInvoices, settings, exportedAt: new Date().toISOString() };
   const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1882,17 +1981,27 @@ document.getElementById('importFileInput').addEventListener('change', (e)=>{
   reader.onload = async (ev)=>{
     try{
       const data = JSON.parse(ev.target.result);
-      if(!Array.isArray(data.invoices) || !Array.isArray(data.products) || !Array.isArray(data.purchases)){
+      if(!Array.isArray(data.invoices) || !Array.isArray(data.products)){
         showToast('فایل پشتیبان معتبر نیست');
         return;
       }
       invoices = data.invoices;
       products = data.products;
-      purchases = data.purchases;
+      if(Array.isArray(data.purchaseInvoices)){
+        purchaseInvoices = data.purchaseInvoices;
+      } else if(Array.isArray(data.purchases)){
+        // backward compatibility with older backup files
+        purchaseInvoices = data.purchases.map(p=>({
+          id: p.id, date: p.date, supplierName: '',
+          items: [{name: p.name, qty: p.qty, costPrice: p.price}], total: p.total
+        }));
+      } else {
+        purchaseInvoices = [];
+      }
       if(data.settings) settings = Object.assign(settings, data.settings);
       await saveInvoices();
       await saveProducts();
-      await savePurchases();
+      await savePurchaseInvoices();
       await saveSettings();
       refreshProductDatalists();
       refreshInvoiceNumberTag();
@@ -1927,9 +2036,9 @@ async function init(){
   refreshProductDatalists();
   refreshInvoiceNumberTag();
   newItemRow();
+  newPurchItemRow();
   renderArchive();
   renderStatementCustList();
-  updatePurchTotal();
 }
 init();
 </script>
