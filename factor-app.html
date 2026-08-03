@@ -1045,6 +1045,20 @@ function getIsoFromJalaliFields(prefix){
   return gy + '-' + pad(gm) + '-' + pad(gd);
 }
 
+function normalizeName(s){
+  return String(s||'')
+    .trim()
+    .replace(/‌/g, ' ')      // zero-width non-joiner (half-space) -> normal space
+    .replace(/\s+/g, ' ')    // collapse multiple/odd spaces
+    .replace(/ي/g, 'ی')      // Arabic ye -> Persian ye
+    .replace(/ك/g, 'ک')      // Arabic kaf -> Persian kaf
+    .replace(/[۰-۹]/g, d => '0123456789'['۰۱۲۳۴۵۶۷۸۹'.indexOf(d)]) // Persian digits -> Latin, so "650" matches "۶۵۰"
+    .toLowerCase();
+}
+function findProductByName(name){
+  const n = normalizeName(name);
+  return products.find(p => normalizeName(p.name) === n);
+}
 function esc(str){
   return String(str==null?'':str).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
@@ -1155,7 +1169,7 @@ function renderItemsTable(){
       if(!item) return;
       if(f==='name'){
         item.name = e.target.value;
-        const match = products.find(p=>p.name === e.target.value);
+        const match = findProductByName(e.target.value);
         if(match){
           item.price = match.price;
           const row = e.target.closest('tr');
@@ -1228,7 +1242,7 @@ document.getElementById('saveInvoiceBtn').addEventListener('click', async ()=>{
     custAddress: custAddress,
     date: date,
     items: validItems.map(i=>{
-      const p = products.find(pr=>pr.name === i.name);
+      const p = findProductByName(i.name);
       return {name:i.name, qty:i.qty, price:i.price, perCarton:i.perCarton||0, costAtSale: p ? (Number(p.costPrice)||0) : 0};
     }),
     note: note,
@@ -1242,7 +1256,7 @@ document.getElementById('saveInvoiceBtn').addEventListener('click', async ()=>{
   // decrease stock for matching products
   let stockChanged = false;
   validItems.forEach(i=>{
-    const p = products.find(pr=>pr.name === i.name);
+    const p = findProductByName(i.name);
     if(p){
       p.stock = (Number(p.stock)||0) - i.qty;
       stockChanged = true;
@@ -1456,7 +1470,7 @@ function openDetail(id){
     await saveInvoices();
     let stockChanged = false;
     inv.items.forEach(i=>{
-      const p = products.find(pr=>pr.name === i.name);
+      const p = findProductByName(i.name);
       if(p){ p.stock = (Number(p.stock)||0) + i.qty; stockChanged = true; }
     });
     if(stockChanged) await saveProducts();
@@ -1667,7 +1681,7 @@ function newPurchItemRow(){
   renderPurchItemsTable();
 }
 function expectedProfitForItem(name, qty, costPrice){
-  const p = products.find(pr=>pr.name === name);
+  const p = findProductByName(name);
   if(!p || !p.price || p.price<=0) return null;
   return (p.price - costPrice) * qty;
 }
@@ -1747,7 +1761,7 @@ document.getElementById('savePurchaseBtn').addEventListener('click', async ()=>{
 
   // increase stock & update last cost price; auto-create products that don't exist yet
   validItems.forEach(i=>{
-    let p = products.find(pr=>pr.name === i.name);
+    let p = findProductByName(i.name);
     if(!p){
       p = {id: Date.now()+Math.random(), name: i.name, price: 0, costPrice: 0, stock: 0};
       products.push(p);
@@ -1845,7 +1859,7 @@ function openPurchaseDetail(id){
     // reverse stock effect for each item
     let changed = false;
     pInv.items.forEach(i=>{
-      const p = products.find(pr=>pr.name === i.name);
+      const p = findProductByName(i.name);
       if(p){ p.stock = (Number(p.stock)||0) - i.qty; changed = true; }
     });
     if(changed) await saveProducts();
@@ -1932,7 +1946,7 @@ function dateInRange(dateStr, range){
 }
 function itemCostForProfit(item){
   if(item.costAtSale !== undefined && item.costAtSale !== null && item.costAtSale > 0) return item.costAtSale;
-  const p = products.find(pr=>pr.name===item.name);
+  const p = findProductByName(item.name);
   return p ? (Number(p.costPrice)||0) : 0;
 }
 function invoiceRealizedProfit(inv){
